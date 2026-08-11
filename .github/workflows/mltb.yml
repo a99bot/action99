@@ -1,0 +1,57 @@
+name: Bot + Cloudflare
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'loop.txt'
+
+jobs:
+  mltb:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT }}
+
+      - name: Clone Repo
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          git clone https://$GH_TOKEN@github.com/TG-99/mltb-2 mltb/ && cd mltb && git checkout deploy
+
+      - name: Install and Start Cloudflare Tunnel
+        env:
+          TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+        run: |
+          curl -L -o cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+          nohup sudo cloudflared tunnel --no-autoupdate run --token $TUNNEL_TOKEN > /dev/null 2>&1 &
+          sleep 5
+
+      - name: Start Bot
+        working-directory: mltb
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          CONFIG_FILE_URL: ${{ secrets.CONFIG_FILE_URL }}
+        run: |
+          echo "PORT=8080" >> .env
+          echo "GH_TOKEN=${GH_TOKEN}" >> .env
+          echo "CONFIG_FILE_URL=${CONFIG_FILE_URL}" >> .env
+          sudo docker compose up --build -d
+
+      - name: Keep Bot running
+        run: |
+          sleep 21450
+
+      - name: Increment loop.txt and push
+        run: |
+          VAL=$(cat loop.txt 2>/dev/null || echo 0)
+          echo $((VAL + 1)) > loop.txt
+          git config user.name "violet-98"
+          git config user.email "tempheroku9.8@proton.me"
+          git add loop.txt
+          git commit -am "loop: $((VAL + 1))"
+          git push

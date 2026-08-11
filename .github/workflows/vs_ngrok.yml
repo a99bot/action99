@@ -1,0 +1,71 @@
+name: CodeServer + ngrok
+
+on:
+  workflow_dispatch:
+
+jobs:
+  code-server:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install code-server
+        run: |
+          curl -fsSL https://code-server.dev/install.sh | sh
+      - name: Create coder user
+        run: |
+          if ! id coder >/dev/null 2>&1; then
+            sudo useradd -m -s /bin/bash coder
+          fi
+          echo "coder ALL=(ALL) NOPASSWD:ALL" | \
+            sudo tee /etc/sudoers.d/coder
+          sudo chmod 440 /etc/sudoers.d/coder
+      - name: Create workspace
+        run: |
+          sudo mkdir -p /home/coder/workspace
+          sudo chown -R coder:coder /home/coder
+      - name: Configure code-server
+        env:
+          PASSWORD: ${{ secrets.PASSWORD }}
+        run: |
+          sudo mkdir -p /home/coder/.config/code-server
+          echo "bind-addr: 0.0.0.0:8080" > /home/coder/.config/code-server/config.yaml && \
+          echo "auth: password" >> /home/coder/.config/code-server/config.yaml && \
+          echo "password: ${PASSWORD}" >> /home/coder/.config/code-server/config.yaml && \
+          echo "cert: false" >> /home/coder/.config/code-server/config.yaml
+      - name: Install code-server extensions
+        run: |
+          sudo code-server --install-extension donjayamanne.githistory || true
+      - name: Configure VS Code settings
+        run: |
+          sudo cp settings.json /root/.local/share/code-server/User/settings.json
+          sudo cp startup.sh /home/coder/startup.sh
+          sudo chown coder:coder /home/coder/startup.sh
+          sudo chmod +x /home/coder/startup.sh
+      - name: Install ngrok
+        run: |
+          curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | \
+            sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" | \
+            sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt-get update
+          sudo apt-get install -y ngrok
+      - name: Configure ngrok
+        env:
+          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+        run: |
+          ngrok config add-authtoken "$NGROK_AUTHTOKEN"
+      - name: Start code-server
+        run: |
+          nohup sudo bash /home/coder/startup.sh & sleep 5
+      - name: Start ngrok TCP tunnel
+        run: |
+          nohup ngrok tcp 8080 --log=stdout > /tmp/ngrok.log 2>&1 &
+          sleep 2
+      - name: Show ngrok address
+        run: |
+          curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url'
+      - name: Keep code-server running
+        run: |
+          sleep 21450

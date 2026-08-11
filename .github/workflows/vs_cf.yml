@@ -1,0 +1,59 @@
+name: CodeServer + Cloudflare
+
+on:
+  workflow_dispatch:
+
+jobs:
+  code-server:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install code-server
+        run: |
+          curl -fsSL https://code-server.dev/install.sh | sh
+      - name: Create coder user
+        run: |
+          if ! id coder >/dev/null 2>&1; then
+            sudo useradd -m -s /bin/bash coder
+          fi
+          echo "coder ALL=(ALL) NOPASSWD:ALL" | \
+            sudo tee /etc/sudoers.d/coder
+          sudo chmod 440 /etc/sudoers.d/coder
+      - name: Create workspace
+        run: |
+          sudo mkdir -p /home/coder/workspace
+          sudo chown -R coder:coder /home/coder
+      - name: Configure code-server
+        env:
+          PASSWORD: ${{ secrets.PASSWORD }}
+        run: |
+          sudo mkdir -p /home/coder/.config/code-server
+          echo "bind-addr: 0.0.0.0:8080" > /home/coder/.config/code-server/config.yaml && \
+          echo "auth: password" >> /home/coder/.config/code-server/config.yaml && \
+          echo "password: ${PASSWORD}" >> /home/coder/.config/code-server/config.yaml && \
+          echo "cert: false" >> /home/coder/.config/code-server/config.yaml
+      - name: Install code-server extensions
+        run: |
+          sudo code-server --install-extension donjayamanne.githistory || true
+      - name: Configure VS Code settings
+        run: |
+          sudo cp settings.json /root/.local/share/code-server/User/settings.json
+          sudo cp startup.sh /home/coder/startup.sh
+          sudo chown coder:coder /home/coder/startup.sh
+          sudo chmod +x /home/coder/startup.sh
+      - name: Start code-server
+        run: |
+          nohup sudo bash /home/coder/startup.sh & sleep 5
+      - name: Install and Start Cloudflare Tunnel
+        env:
+          TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+        run: |
+          curl -L -o cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+          nohup sudo cloudflared tunnel --no-autoupdate run --token $TUNNEL_TOKEN > /dev/null 2>&1 &
+          sleep 5
+      - name: Keep code-server running
+        run: |
+          sleep 21450
